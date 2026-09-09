@@ -1,6 +1,9 @@
-from .mesh_utils import *
+try:
+    from .mesh_utils import *
+except ImportError:
+    from mesh_utils import *
 import scipy.sparse as sparse
-import pyigl as igl
+import igl
 import pickle
 import os
 
@@ -218,24 +221,14 @@ class icosphere(object):
         """
         Construct FEM matrices
         """
-        V = p2e(self.vertices)
-        F = p2e(self.faces)
+        V = np.ascontiguousarray(self.vertices, dtype=np.float64)
+        F = np.ascontiguousarray(self.faces, dtype=np.int32)
         # Compute gradient operator: #F*3 by #V
-        G = igl.eigen.SparseMatrixd()
-        L = igl.eigen.SparseMatrixd()
-        M = igl.eigen.SparseMatrixd()
-        N = igl.eigen.MatrixXd()
-        A = igl.eigen.MatrixXd()
-        igl.grad(V, F, G)
-        igl.cotmatrix(V, F, L)
-        igl.per_face_normals(V, F, N)
-        igl.doublearea(V, F, A)
-        igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_VORONOI, M)
-        G = e2p(G)
-        L = e2p(L)
-        N = e2p(N)
-        A = e2p(A)
-        M = e2p(M)
+        G = igl.grad(V, F)
+        L = igl.cotmatrix(V, F)
+        N = igl.per_face_normals(V, F, np.array([0.0, 0.0, 0.0]))
+        A = igl.doublearea(V, F)
+        M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_VORONOI)
         M = M.data
         # Compute latitude and longitude directional vector fields
         NS = np.reshape(G.dot(self.lat), [self.nf, 3], order='F')
