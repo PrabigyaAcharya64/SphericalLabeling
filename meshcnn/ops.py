@@ -26,7 +26,7 @@ class _MeshConv(nn.Module):
         pkl = pickle.load(open(mesh_file, "rb"))
         self.pkl = pkl
         self.nv = self.pkl['V'].shape[0]
-        G = sparse2tensor(pkl['G'])  # gradient matrix V->F, 3#F x #V
+        G = sparse2tensor(pkl['G'].tocoo())  # gradient matrix V->F, 3#F x #V
         NS = torch.tensor(pkl['NS'], dtype=torch.float32)  # north-south vector field, #F x 3
         EW = torch.tensor(pkl['EW'], dtype=torch.float32)  # east-west vector field, #F x 3
         self.register_buffer("G", G)

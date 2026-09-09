@@ -127,5 +127,5 @@ class S2D3DSegLoader(Dataset):
         data = data[:self.in_ch, :self.nv].astype(np.float32)
 
         labels = [self.lut[label] for label in labels]
-        labels = np.asarray(labels).astype(np.int)
+        labels = np.asarray(labels).astype(int)
         return data, labels

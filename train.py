@@ -235,7 +235,7 @@ def main():
     start_ep = 0
     best_dice = 0
     if args.resume:
-        resume_dict = torch.load(args.resume)
+        resume_dict = torch.load(args.resume, weights_only=False)
         start_ep = resume_dict['epoch']
         best_dice = resume_dict['dice']
 

@@ -99,7 +99,7 @@ def float_to_int(data, digits=None, dtype=np.int32):
     # populate digits from kwargs
     if digits is None:
         digits = decimal_to_digits(1e-8)
-    elif isinstance(digits, float) or isinstance(digits, np.float):
+    elif isinstance(digits, float) or isinstance(digits, float):
         digits = decimal_to_digits(digits)
     elif not (isinstance(digits, int) or isinstance(digits, np.integer)):
         log.warn('Digits were passed as %s!', digits.__class__.__name__)
@@ -141,7 +141,7 @@ def p2e(m):
             return igl.eigen.MatrixXi(m.astype(np.int32))
         elif m.dtype.type in [np.float64, np.float32]:
             return igl.eigen.MatrixXd(m.astype(np.float64))
-        elif m.dtype.type == np.bool:
+        elif m.dtype.type == bool:
             return igl.eigen.MatrixXb(m)
         raise TypeError("p2e only support dtype float64/32, int64/32 and bool")
     if sparse.issparse(m):

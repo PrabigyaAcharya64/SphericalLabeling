@@ -83,9 +83,9 @@ def main():
     assert(os.path.isfile(args.ckpt))
     print("=> loading checkpoint '{}'".format(args.ckpt))
     if use_cuda:
-        resume_dict = torch.load(args.ckpt)
+        resume_dict = torch.load(args.ckpt, weights_only=False)
     else:
-        resume_dict = torch.load(args.ckpt, map_location=lambda storage, loc: storage)
+        resume_dict = torch.load(args.ckpt, map_location=lambda storage, loc: storage, weights_only=False)
 
     out_ch = len(resume_dict['state_dict']['module.out_conv.coeffs'])
     model = SphericalUNet(mesh_folder=args.mesh_folder, in_ch=len(args.in_ch), out_ch=out_ch, max_level=args.max_level, min_level=args.min_level, fdim=args.feat)
