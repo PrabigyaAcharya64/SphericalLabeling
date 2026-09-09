@@ -18,17 +18,20 @@ def write_vtk(fn, v, f):
     fp.close()
 
 def main():
+    dest = "mesh_files"
+    fname = 'icosphere_{}.pkl'
+    fname_vtk = 'icosphere_{}.vtk'
+
+    if not os.path.exists(dest):
+        os.makedirs(dest)
+
     try:
         sys.path.append("meshcnn")
         from mesh import export_spheres
-        export_spheres(range(8), "mesh_files")
+        export_spheres(range(8), dest)
     except ImportError:
         print("ImportError occurred. Will download precomputed mesh files instead...")
         import subprocess
-        dest = "mesh_files"
-        if not os.path.exists(dest):
-            os.makedirs(dest)
-        fname = 'icosphere_{}.pkl'
         for i in range(8):
             url = 'http://island.me.berkeley.edu/ugscnn/mesh_files/' + fname.format(i)
             command = ["wget", "--no-check-certificate", "-P", dest, url]
@@ -37,13 +40,13 @@ def main():
             except Exception as e:
                 print(e)
 
-        fname_vtk = 'icosphere_{}.vtk'
-        for i in range(8):
-            try:
-                pkl = pickle.load(open(dest + '/' + fname.format(i), "rb"))
-                write_vtk(dest + '/' + fname_vtk.format(i), pkl['V'], pkl['F'])
-            except Exception as e:
-                print(e)
+   
+    for i in range(8):
+        try:
+            pkl = pickle.load(open(dest + '/' + fname.format(i), "rb"))
+            write_vtk(dest + '/' + fname_vtk.format(i), pkl['V'], pkl['F'])
+        except Exception as e:
+            print(e)
 
 if __name__ == '__main__':
     main()
