@@ -1,242 +1,189 @@
-# SphericalLabeling: Cortical Surface Labeling using Spherical Data Augmentation and Context-aware Training
+# SphericalLabeling (maintained fork)
 
-## Description
-We adapt [spherical convolutional neural networks](https://github.com/maxjiang93/ugscnn) designed for generic semantic segmentation tasks. Yet, direct use of the generic networks for our sulcal labeling task is challenging due to (1) limited training samples in capturing anatomical variability and (2) lack of hierarchical neuroanatomical association. To adapt the generic networks to our problem setting, we propose spherical data augmentation as well as context-aware training to efficiently utilize existing training samples and to accept a wide range of individual variability by considering training data synthesis and contextual information.
-![image](https://user-images.githubusercontent.com/9325798/97788576-faf7a280-1b87-11eb-8e75-38670b9dda14.png)
+Fork of [ilwoolyu/SphericalLabeling](https://github.com/ilwoolyu/SphericalLabeling),
+updated to run on current Python, NumPy, SciPy, PyTorch and libigl.
 
-## Singularity images [[link](https://vanderbilt.box.com/v/SphericalLabeling)]
-* Cortical sulci
-  * Lateral Prefrontal Cortex [[paper1](#ref3)][[paper2](#ref4)]
+The upstream repository targets Python 3.6-era dependencies and does not run as
+published on a modern environment. This fork restores a missing file, ports a
+dead dependency, and fixes several API changes. The method and all
+hyperparameters are unchanged.
 
-* Cortical parcellation
-  * BrainCOLOR [[paper](#ref2)][[protocol](https://mindboggle.info/braincolor)]
-  * DKT31 [[paper](#ref2)][[protocol](https://mindboggle.readthedocs.io/en/latest/labels.html)]
+Reference: Lyu I, Bao S, Hao L, Yao J, Miller JA, Voorhies W, Taylor WD,
+Bunge SA, Weiner KS, Landman BA. *Labeling lateral prefrontal sulci using
+spherical data augmentation and context-aware training.* NeuroImage 229
+(2021) 117758. https://doi.org/10.1016/j.neuroimage.2021.117758
+---
 
 ## Requirements
-* [HSD](https://github.com/ilwoolyu/HSD): surface registration (available at [Docker](https://hub.docker.com/r/ilwoolyu/cmorph) and [Singularity](https://vanderbilt.box.com/v/cmorph-release))
-* [SphericalRemesh](https://github.com/ilwoolyu/SphericalRemesh): data augmentation (available at [Docker](https://hub.docker.com/r/ilwoolyu/cmorph) and [Singularity](https://vanderbilt.box.com/v/cmorph-release))
-* pytorch (>=`0.4.0`)
-* numpy (>=`1.11.3`)
-* scipy (>=`1.2.1`)
 
-## Data structure
-For a better processing flow, we assume the FreeSurfer standard data structure.
-```
-$SUBJECTS_DIR
-├── subj_1
-│   └── surf
-│       ├── lh.curv
-│       ├── lh.inflated.H
-│       ├── lh.sulc
-│       └── lh.sphere
-.
-.
-└── subj_N
-    └── surf
-        ├── lh.curv
-        ├── lh.inflated.H
-        ├── lh.sulc
-        └── lh.sphere
-```
-We will create `$DATA_DIR` that ultimately contains re-tessellated spherical data by a certain level of icosahedral subdivision. Be sure to create `$DATA_DIR/features` and `$DATA_DIR/labels` before the processing.
-```
-$DATA_DIR
-├── features
-│   ├── subj_1.lh.aug0.curv.dat
-│   ├── subj_1.lh.aug0.iH.dat
-│   ├── subj_1.lh.aug0.sulc.dat
-.
-.
-│   ├── subj_N.lh.aug15.curv.dat
-│   ├── subj_N.lh.aug15.iH.dat
-│   ├── subj_N.lh.aug15.sulc.dat
-.
-.
-│   ├── subj_N.lh.aug0.curv.dat
-│   ├── subj_N.lh.aug0.iH.dat
-│   ├── subj_N.lh.aug0.sulc.dat
-.
-.
-│   ├── subj_N.lh.aug15.curv.dat
-│   ├── subj_N.lh.aug15.iH.dat
-│   └── subj_N.lh.aug15.sulc.dat
-└── labels
-    ├── subj_1.lh.aug0.label.dat
-    ├── subj_1.lh.aug1.label.dat
-    .
-    .
-    ├── subj_N.lh.aug14.label.dat
-    └── subj_N.lh.aug15.label.dat
-```
-## Step 0. Environment setup
-```
-$ git clone https://github.com/ilwoolyu/SphericalLabeling.git
+- Python 3.12 or 3.13 (the `libigl` wheel is `cp312-abi3`; earlier versions will not resolve)
+- Linux or macOS
+- A CUDA GPU for training. Inference runs on CPU.
+
+Mesh generation and the model forward pass have been verified on macOS ARM.
+Training has not been run; see [Verification status](#verification-status).
+
+## Setup
+
+```bash
+git clone https://github.com/PrabigyaAcharya64/SphericalLabeling.git
+cd SphericalLabeling
+
+python3.12 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+pip install -r requirements.txt
+python gen_ico.py
 ```
 
-Run `python gen_ico.py` to generate icosahedral mesh files (`pkl` and `vtk`). By default, they will be generated in `$PWD/mesh_files`.
+`gen_ico.py` writes `mesh_files/icosphere_0..7` as both `.pkl` and `.vtk`,
+16 files in total. The `.pkl` files hold the precomputed sparse convolution
+operators used by the network; the `.vtk` files are the plain geometry used by
+SphericalRemesh during data preparation.
 
-## Step 1. Surface registration
-Run HSD registration with `--outputcoeff` (see how to register spheres using HSD in a [group-wise](https://github.com/ilwoolyu/HSD#usage) or [pair-wise](https://github.com/ilwoolyu/HSD#pairwise-registration) manner). For quick group-wise registration on FreeSurfer, use [this script](https://github.com/ilwoolyu/HSD/tree/master/script). After HSD, the spherical harmonics coefficients (`txt`) will be generated. For convenience, assume that `HSD` stores the spherical harmonics coefficients for each subject directory. 
+Verify:
 
-Then, let's convert FreeSurfer data into `txt` files (values per line). Using `cut` (default shell command) and `mris_convert` (FreeSurfer command), surface geometry files can be converted into the ASCII format. For example, the following command converts `lh.curv`:
-```
-$ mris_convert \
--c $SUBJECTS_DIR/surf/lh.curv \
-$SUBJECTS_DIR/surf/lh.sphere \
-$SUBJECTS_DIR/HSD/lh.curv.asc
-
-$ cut -d ' ' -f 5 $SUBJECTS_DIR/HSD/lh.curv.asc > $SUBJECTS_DIR/HSD/lh.curv.txt
-
-$ rm $SUBJECTS_DIR/HSD/lh.curv.asc
-```
-By slightly modifying the script above, the FreeSurfer geometry files can be converted in a consistent manner below:
-* `lh.curv` --> `lh.curv.txt`
-* `lh.inflated.H` --> `lh.iH.txt`
-* `lh.sulc` --> `lh.sulc.txt`
-
-Same stroy for `lh.label.txt`. Any non-negative integer ranges are allowed for label definitions. Be sure the files to have row-wise label information. Finally, convert `lh.sphere` into a `VTK` format:
-```
-$ mris_convert $SUBJECTS_DIR/surf/lh.sphere $SUBJECTS_DIR/HSD/lh.sphere.vtk
-```
-Loop through all subjects for data preparation. They will be later used for data augmentation. After conversion, the directory structure should look like
-
-```
-$SUBJECTS_DIR
-├── subj_1
-│   ├── HSD
-│   |   ├── lh.curv.txt
-│   |   ├── lh.coeff.txt
-│   |   ├── lh.iH.txt
-│   |   ├── lh.label.txt
-│   |   ├── lh.sulc.txt
-│   |   └── lh.sphere.vtk
-│   └── surf
-.
-.
-└── subj_N
-    ├── HSD
-    |   ├── lh.curv.txt
-    |   ├── lh.coeff.txt
-    |   ├── lh.iH.txt
-    |   ├── lh.label.txt
-    |   ├── lh.sulc.txt
-    |   └── lh.sphere.vtk
-    └── surf
+```python
+import pickle
+d = pickle.load(open("mesh_files/icosphere_5.pkl", "rb"))
+print(d["V"].shape)      # (10242, 3)
 ```
 
-## Step 2. Spherical data augmentation
-Run [SphericalRemesh](https://github.com/ilwoolyu/SphericalRemesh) to generate intermediate deformation. For each individual subject, the intermediate deformation can be generated by the following command:
-```
-$ SphericalRemesh \
--s $SUBJECTS_DIR/subj_1/HSD/lh.sphere.vtk \
--r $PWD/mesh_files/icosphere_5.vtk \
--c $SUBJECTS_DIR/subj_1/HSD/lh.coeff.txt \
--p $SUBJECTS_DIR/subj_1/HSD/lh.curv.txt \
-   $SUBJECTS_DIR/subj_1/HSD/lh.iH.txt \
-   $SUBJECTS_DIR/subj_1/HSD/lh.sulc.txt \
---outputProperty $DATA_DIR/features/subj_1.lh.aug \
---deg0 0 \
---deg 15 \
---ftype double
-```
-Similarly, label data can be augmented as well. Be sure to enable `--nneighbor` flag to avoid barycentric interpolation of categorical data.
-```
-$ SphericalRemesh \
--s $SUBJECTS_DIR/subj_1/HSD/lh.sphere.vtk \
--r $PWD/mesh_files/icosphere_5.vtk \
--c $SUBJECTS_DIR/subj_1/HSD/lh.coeff.txt \
--p $SUBJECTS_DIR/subj_1/HSD/lh.label.txt \
---outputProperty $DATA_DIR/labels/subj_1.lh.aug \
---deg0 0 \
---deg 15 \
---ftype int16 \
---nneighbor
-```
-> Note: `icosphere_#.vtk` ranges 0 to 7. `#` will decide the maximum resolution of input channels in the networks. For `#=5`, you can control input channel resolution (`--max_level` in `train.py`) up to 5.
+Icosphere levels: ico4 = 2,562 vertices, ico5 = 10,242, ico6 = 40,962.
 
-Once again, loop through all subjects for training sample augmentation.
+`mesh_files/` is gitignored. `icosphere_7.pkl` is 118 MB, above GitHub's
+100 MB limit, and the files regenerate in seconds.
 
-## Step 3. Training
-Run `train.sh` to train the data. You need to setup `train.sh` properly, including `$DATA_DIR`, output directory, hyper-parameters, etc. The script supports k-fold cross-validation. You can customize k by `--kcv` (5 by default) and set the current fold by `--fold`. If successful, you will see the training log like
-```
-$ ./train.sh
-Namespace(batch_size=4, blackout_id='', classes=[0, 1, 2, 3, 4, 6, 7, 8, 10], data_folder='/home/user/data', decay=False, deg=15, drop=[0], epochs=30, feat=32, fold=1, hemi='lh', in_ch=['curv', 'iH', 'sulc', 'label'], kcv=5, log_dir='/home/user/data/cv/fold1', log_interval=300, lr=0.01, max_level=5, mesh_folder='./mesh_files', min_level=0, no_cuda=False, optim='adam', resume=None, seed=1, test_batch_size=10, train_stats_freq=0, ts=10
-5179337 paramerters in total
-Train Epoch: 1 [0/1200 (0%)] Loss: 2.247794
-[Epoch 1 train stats]: Avg loss: 0.2559
-[Epoch 1 val stats]: MIoU: 0.3506; Mean Accuracy: 0.4789; Mean Dice: 0.5035; Avg loss: 0.0841
-[Epoch 1 test stats]: MIoU: 0.3543; Mean Accuracy: 0.4814; Mean Dice: 0.4840; Avg loss: 0.0869
-...
-```
-> Note: the classes do not necessarily contain all the labels in `label.dat`. For the training, you may want to choose labels of interests only.
+## Pipeline overview
 
-Once trained, you will find trained models '.pth' in each fold.
+This repository is the network only. Producing its input requires two external
+tools, distributed together in the `ilwoolyu/cmorph` Docker and Singularity
+images.
 
-## Step 4. Inference
-### Within cross validation
-In the cross validation, `aug0.dat` files (rigid rotation) are used for validation and test. They can be thus used for the inference. Copy them to `$TEST_DIR`:
-```
-$ cp $DATA_DIR/features/subj_1.lh.aug0.*.dat $TEST_DIR
-```
-To infer labels, run the following (GPU-free) command:
-```
-$ ./test.sh $PATH_TO_PTH $TEST_DIR
-```
->`test.py` supports multiple formats (`txt`, `dat`, `mat`). Use `--fmt` to determine the format, depending on applications.
+| Stage | Tool | Output |
+|---|---|---|
+| MRI to cortical surfaces | FreeSurfer | `lh.curv`, `lh.sulc`, `lh.sphere`, `lh.inflated.H` |
+| Surface registration | HSD | `lh.coeff.txt` (spherical harmonic coefficients) |
+| Resampling + augmentation | SphericalRemesh | `.dat` files on a fixed icosphere |
+| Training and inference | this repo | model checkpoints, per-label probabilities |
 
-This will generate raw values from the output layer per label as `$TEST_DIR/subj_1.?h.aug0.prob*.txt`. After applying normalization such as soft-max on these values, you can either find maximum likelihood or employ a graph-cut technique to determine final labels.
+Augmentation happens inside the resampling step. A single SphericalRemesh call
+reconstructs the registration warp at each spherical harmonic degree from 0 to
+`--deg`, producing one resampled copy per degree. Degree 0 is close to
+unregistered, the maximum degree is fully registered, and the intermediates are
+partial registrations. `aug0` is used for validation and testing.
 
-In case of mapping `prob*.txt` to the native sphere, the rotated sphere used for `aug0` is needed. To generate rigid rotation, run:
-```
-$ SphericalRemesh \
--s $SUBJECTS_DIR/subj_1/HSD/lh.sphere.vtk \
--c $SUBJECTS_DIR/subj_1/HSD/lh.coeff.txt \
---deform $TEST_DIR/subj_1.lh.sphere.rigid.vtk \
---deg 0
-```
-Then, use `$TEST_DIR/subj_1.lh.sphere.rigid.vtk` to re-tessellate `prob*.txt` with the native sphere:
-```
-$ SphericalRemesh \
--s $PWD/mesh_files/icosphere_5.vtk \
--r $TEST_DIR/subj_1.lh.sphere.rigid.vtk \
--p $TEST_DIR/subj_1.?h.aug0.prob1.txt $TEST_DIR/subj_1.?h.aug0.prob2.txt ... \
---outputProperty $TEST_DIR/subj_1.lh
-```
-This will generate `$TEST_DIR/subj_1.lh.prob*.txt` tessellated on the native sphere.
+**Labels must be resampled with `--nneighbor`.** Without it they are
+interpolated barycentrically, silently averaging distinct label values into
+meaningless ones. Features use `--ftype double`; labels use
+`--ftype int16 --nneighbor`.
 
-### Outside of cross validation
-Generate `txt` files first (see Step 1). Similar to Step 2, re-tessellated spherical data (`dat` files) are needed as the networks are trained with icosahedral mesh. To re-tessellate spherical data, run the following command:
-```
-$ SphericalRemesh \
--s $SUBJECTS_DIR/subj_1/HSD/lh.sphere.vtk \
--r $PWD/mesh_files/icosphere_5.vtk \
--p $SUBJECTS_DIR/subj_1/HSD/lh.curv.txt \
-   $SUBJECTS_DIR/subj_1/HSD/lh.iH.txt \
-   $SUBJECTS_DIR/subj_1/HSD/lh.sulc.txt \
---outputProperty $TEST_DIR/subj_1.lh.res \
---deg 0 \
---ftype double
-```
-This will generate 
-```
-$TEST_DIR
-├── subj_1.lh.res.curv.dat
-├── subj_1.lh.res.iH.dat
-└── subj_1.lh.res.sulc.dat
-```
-Once again, run the following command:
-```
-$ ./test.sh $PATH_TO_PTH $TEST_DIR
-```
-As described already, use a proper method to determine final labels from the generated `prob`. If needed, map them to the native sphere before determining the final labels (see the sub-section above).
-## Context-aware training
-If neuroanatomical association is known (e.g., hierarchical emergence of sulci - non-tertiary: first; tertiary: last), we employ that information for better guidance of labeling. The implementation is straightforward. First, training can be done with upper levels of the hierarchy. Use `--classes` flag in `train.py`.
+Expected input filename grammar:
 
-Once trained, the raw outputs of the inference from the networks can be generated by Step 4. Use `--fmt dat` flag in `test.py` for all training samples. This will generate the binary format of the raw outputs (`prob?.dat`) ready for the next stage of the training. By adding `prob*` to `--in_ch` and updating `--classes` in `train.py`, the second stage of the training starts. Depending on a total of levels in the hierarchy, the steps repeat as needed. See more details in [4](#ref4).
+```
+<subject>.<hemi>.<augTag>.<featname>.dat
+```
 
-## References
-Please cite the following papers if you find it useful.
-* <a id="ref1"></a>Lyu, I., Kang, H., Woodward, N., Styner, M., Landman, B., <a href="https://doi.org/10.1016/j.media.2019.06.013">Hierarchical Spherical Deformation for Cortical Surface Registration</a>, <i>Medical Image Analysis</i>, 57, 72-88, 2019
-* <a id="ref2"></a>Parvathaneni, P., Bao, S., Nath, V., Woodward, N., Claassen, D., Cascio, C., Zald, D., Huo, Y., Landman, B., Lyu, I., <a href="https://doi.org/10.1007/978-3-030-32248-9_56">Cortical Surface Parcellation using Spherical Convolutional Neural Networks</a>, <i>Medical Image Computing and Computer-Assisted Intervention (MICCAI) 2019</i>. LNCS11766, 501-509, 2019
-* <a id="ref3"></a>Hao, L., Bao, S., Tang, Y., Gao, R., Parvathaneni, P., Miller, J., Voorhies, W., Yao, J., Bunge, S., Weiner, K., Landman, B., Lyu, I., <a href="https://doi.org/10.1109/ISBI45749.2020.9098414">Automatic Labeling of Cortical Sulci Using Spherical Convolutional Neural Networks in a Developmental Cohort</a>, <i>IEEE International Symposium on Biomedical Imaging (ISBI) 2020</i>, IEEE, 412-415, 2020
-* <a id="ref4"></a>Lyu I., Bao, S., Hao, L., Yao, J., Miller, J., Voorhies, W., Taylor, W., Bunge, S., Weiner, K., Landman, B., <a href="https://doi.org/10.1016/j.neuroimage.2021.117758">Labeling Lateral Prefrontal Sulci using Spherical Data Augmentation and Context-aware Training</a>, <i>NeuroImage</i>, 229, 117758, 2021
+for example `subj_1.lh.aug0.curv.dat`.
+
+## Changes from upstream
+
+### Restored file
+
+`meshcnn/mesh_utils.py` is imported by `meshcnn/mesh.py` but is absent from the
+upstream repository, so `gen_ico.py` fails immediately on a clean clone. The
+file is vendored here from
+[maxjiang93/ugscnn](https://github.com/maxjiang93/ugscnn) (MIT), the project
+`meshcnn/` is adapted from.
+
+### Ported dependency
+
+`meshcnn/mesh.py` and `meshcnn/mesh_utils.py` imported `pyigl`, an obsolete
+libigl binding that no longer installs. The current `libigl` package provides
+the same functions under the name `igl`, with two API differences: results are
+returned rather than written into preallocated `igl.eigen` containers, and
+numpy arrays are accepted directly, so the `p2e`/`e2p` conversion helpers are
+no longer needed.
+
+`construct_matrices` in `meshcnn/mesh.py` was rewritten accordingly. Five
+calls are affected: `grad`, `cotmatrix`, `per_face_normals`, `doublearea`,
+`massmatrix`. `per_face_normals` now takes a fallback normal for degenerate
+faces, passed as `[0, 0, 0]`.
+
+`p2e` and `e2p` remain in `mesh_utils.py` but are dead code; they reference
+`igl.eigen`, which no longer exists.
+
+### Import and control-flow fixes
+
+- `meshcnn/mesh.py`: the relative import of `mesh_utils` is wrapped in a
+  `try`/`except`, since `gen_ico.py` loads `mesh` as a top-level module via
+  `sys.path.append` while the file was written for package context.
+- `gen_ico.py`: VTK export sat inside the `except ImportError` branch, so it
+  ran only when mesh generation failed. Moved out of the branch; it now runs on
+  both paths.
+
+### Compatibility fixes
+
+| File | Was | Now |
+|---|---|---|
+| `loader.py` | `.astype(np.int)` | `.astype(int)` |
+| `meshcnn/mesh_utils.py` | `isinstance(digits, np.float)` | `isinstance(digits, float)` |
+| `meshcnn/mesh_utils.py` | `m.dtype.type == np.bool` | `m.dtype.type == bool` |
+| `meshcnn/utils.py` | `sparse.coo.coo_matrix` | `sparse.coo_matrix` |
+| `meshcnn/utils.py` | `torch.sparse.FloatTensor(...)` | `torch.sparse_coo_tensor(...)` |
+| `meshcnn/ops.py` | `sparse2tensor(pkl['G'])` | `sparse2tensor(pkl['G'].tocoo())` |
+| `train.py`, `test.py` | `torch.load(path)` | `torch.load(path, weights_only=False)` |
+
+`np.int`, `np.float` and `np.bool` were removed in NumPy 2.0. The
+`scipy.sparse.coo` namespace is deprecated. `torch.sparse.FloatTensor` is
+superseded by `torch.sparse_coo_tensor`.
+
+Two of these are worth explaining further.
+
+The `ops.py` change follows from the libigl port: `igl.grad` now returns a
+`csc_matrix` where the old binding returned `coo`, and `sparse2tensor` asserts
+`coo`. `pkl['L']` and `pkl['F2V']` were already converted at their call sites,
+so this matches the existing idiom.
+
+The `torch.load` change is needed because PyTorch 2.6 flipped `weights_only`
+to default true. These checkpoints are full pickles containing optimizer state,
+which the restricted unpickler rejects.
+
+### Deliberately not changed
+
+- `train.py`: `from torch.autograd import Variable`. Unused, still imports.
+- `train.py`: `scheduler.step(epoch)`. Emits a deprecation warning but works;
+  changing it risks altering learning-rate schedule semantics.
+- `meshcnn/utils.py`: `torch.LongTensor([m.row, m.col])` triggers a performance
+  warning about constructing tensors from lists of arrays. Harmless at ico5;
+  worth revisiting if sparse tensor construction becomes slow at ico6 or ico7.
+- No algorithm, formula, hyperparameter or default value was modified.
+
+## Verification status
+
+**Verified on macOS ARM, Python 3.12:**
+
+- `gen_ico.py` produces 16 files from a clean checkout; `icosphere_5.pkl` has
+  `V` of shape `(10242, 3)`
+- All 11 modules import cleanly, with `SyntaxWarning` promoted to error
+- `SphericalUNet` forward pass on CPU: input `(2, 3, 10242)` returns
+  `(2, 8, 10242)` at `max_level=5`, all values finite
+- `loader.py` parses the filename grammar, performs k-fold selection, and
+  collates batches of `(4, 1, 10242)` data with `(4, 10242)` labels, using
+  synthetic `.dat` files
+
+**Not verified:**
+
+- End-to-end training and inference. `train.py` and `test.py` call `.cuda()`
+  unconditionally and require processed data plus a GPU.
+- Checkpoint loading. No `.pth` file was available, so the `weights_only=False`
+  change is reasoned but unexercised.
+- Data preparation (FreeSurfer, HSD, SphericalRemesh). Requires those tools and
+  real subject data.
+
+## Attribution
+
+Upstream: [ilwoolyu/SphericalLabeling](https://github.com/ilwoolyu/SphericalLabeling)
+by Ilwoo Lyu. `meshcnn/` is adapted from
+[maxjiang93/ugscnn](https://github.com/maxjiang93/ugscnn) (MIT). Original
+licence terms apply; see `LICENSE`.
