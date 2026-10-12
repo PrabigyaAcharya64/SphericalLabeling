@@ -24,15 +24,12 @@ class S2D3DSegLoaderSingle(Dataset):
     def __len__(self):
         return len(self.flist)
 
-    def __getitem__(self, idx):
+       def __getitem__(self, idx):
         # load files
         subj = self.flist[idx]
 
-        # single-thread loader
-        data = np.array([])
-        for feat in subj:
-            data = np.fromfile(feat,count=self.nv,dtype=np.double)
-        data = np.reshape(data, (-1, self.nv))
-        data = data[:self.in_ch, :self.nv].astype(np.float32)
+        # load every feature file (curv, iH, sulc) and stack them as channels
+        data = np.stack([np.fromfile(feat, count=self.nv, dtype=np.double) for feat in subj])
+        data = data.astype(np.float32)
 
         return data
